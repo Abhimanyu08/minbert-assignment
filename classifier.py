@@ -12,6 +12,7 @@ from tokenizer import BertTokenizer
 from bert import BertModel
 from torch.optim import AdamW
 import pickle
+# from config import PretrainedConfig
 
 # fix the random seed
 def seed_everything(seed=11747):
@@ -27,11 +28,25 @@ def seed_everything(seed=11747):
 class BertSentClassifier(torch.nn.Module):
 	def __init__(self, config):
 		super(BertSentClassifier, self).__init__()
-		pass
+		self.model = BertModel.from_pretrained('bert-base-uncased')
+
+		self.dropout = torch.nn.Dropout(config.hidden_dropout_prob)
+		self.classifier  = torch.nn.Linear(config.hidden_size, config.num_labels)
+
+		if config.freeze_lm:
+			self.freeze_language_model()
 
 	def forward(self, input_ids, token_type_ids, attention_mask): 
 		# 
-		pass
+		output_dict = self.model(input_ids, attention_mask)
+		pooler_out = output_dict['pooler_output']
+		logits = self.classifier(self.dropout(pooler_out))
+
+		return F.log_softmax(logits, dim = 1)	
+
+	def freeze_language_model(self):
+		for param in self.model.parameters():
+			param.requires_grad = False
 
 
 class PretrainedBert(torch.nn.Module):
@@ -128,7 +143,7 @@ def get_args():
 	parser.add_argument("--train", 				type=str, 	default=	"data/sst-train.txt")
 	parser.add_argument("--dev", 				type=str, 	default=	"data/sst-dev.txt")
 	parser.add_argument("--test", 				type=str, 	default=	"data/sst-test.txt")
-	parser.add_argument("--seed", 				type=int, 	default= 	11747)
+	parser.add_argument("--seed", 				type=int, 	default= 	69)
 	parser.add_argument("--batch_size", 			type=int, 	default= 	80)
 	parser.add_argument("--epochs", 			type=int, 	default= 	5)
 	parser.add_argument("--lr",	 			type=float, 	default=	1e-3)
@@ -136,6 +151,7 @@ def get_args():
 	parser.add_argument("--cuda",				type=str,   	default= 	'1')
 	parser.add_argument("--dev_out", 			type=str, 	default=	"sst-dev-output.txt")
 	parser.add_argument("--test_out", 			type=str, 	default=	"sst-test-output.txt")
+	parser.add_argument("--freeze_lm", type = bool, default= False)
 	
 
 
@@ -201,14 +217,14 @@ if __name__ == "__main__":
 	test_dataloader 				= DataLoader(test_dataset, 	 	shuffle = False, batch_size= args.batch_size, collate_fn= test_dataset.collate_fn)
 
 	# you can customize the config file that you want to provide to the Sentence classifier model
-	config 		 				= 	{'hidden_dropout_prob':0.3, 'num_labels': num_labels, 'hidden_size':768, 'data_dir':'.', 'option': args.option}
+	config 		 				= 	{'hidden_dropout_prob':0, 'num_labels': num_labels, 'hidden_size':768, 'data_dir':'.', 'option': args.option, 'freeze_lm':args.freeze_lm}
 	config 		 				= 	SimpleNamespace(**config)
 
 
 	if args.option =='finetune':
 
 		# initialize the Senetence Classification Model
-		model 						 	= BertSentClassifier(config)
+		model = BertSentClassifier(config)
 
 		print("Loading Done")
 
@@ -216,6 +232,8 @@ if __name__ == "__main__":
 
 		if int(args.cuda)>= 0:
 			use_cuda = True
+			print(torch.cuda.is_available())
+			print(torch.cuda.get_device_name())
 			os.environ['CUDA_VISIBLE_DEVICES'] = args.cuda
 			model.cuda()
 
@@ -272,7 +290,7 @@ if __name__ == "__main__":
 	elif args.option == 'pretrain':
 		with open('weights.pkl','rb') as handle:
 			weights = pickle.load(handle)	
-		model 					=	PretrainedBert(config, weights)	
+		model =	PretrainedBert(config, weights)	
 
 
 
@@ -280,14 +298,3 @@ if __name__ == "__main__":
 	test_acc, test_f1		= model_eval(test_dataloader, 		model,	args, save_file=args.test_out)
 
 	print(f"For seed {args.seed}\t  Dev acc :: {dev_acc}\t Test acc :: {test_acc}")
-
-
-	
-	
-
-
-
-
-
-
-
