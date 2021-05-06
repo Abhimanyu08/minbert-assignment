@@ -35,7 +35,15 @@ class BertSelfAttention(nn.Module):
     # each key, query, value is of [bs, self.num_attention_heads, seq_len, self.attention_head_size]
     # eq (1) of https://arxiv.org/pdf/1706.03762.pdf
     # todo
-    raise NotImplementedError
+    att_scores = query@key.transpose(-2, -1)/math.sqrt(self.attention_head_size)
+    att_scores.masked_fill_(attention_mask == -10000.0, value = -10000.0)
+
+    att_scores  = F.softmax(att_scores, dim = -1)
+
+    att_scores = self.dropout(att_scores)
+
+    return att_scores@value
+
 
   def forward(self, hidden_states, attention_mask):
     key_layer = self.transform(hidden_states, self.key)
@@ -69,7 +77,8 @@ class BertLayer(nn.Module):
     ln_layer: layer norm that takes input+sublayer(output)
     """
     # todo
-    raise NotImplementedError
+    sublayer = dropout(dense_layer(output))
+    return ln_layer(input + sublayer)
 
   def forward(self, hidden_states, attention_mask):
     # todo
@@ -80,9 +89,20 @@ class BertLayer(nn.Module):
     # feed forward
 
     # another add-norm layer
+    attn_values = self.self_attention(hidden_states, attention_mask)
+    bs = hidden_states.size(0)
+    attn_values = attn_values.transpose(1,2).contiguous().view(bs, -1, self.self_attention.all_head_size)
 
-    raise NotImplementedError
+    hidden_states = self.add_norm(hidden_states, attn_values, self.attention_dense, self.attention_dropout, self.attention_layer_norm)
 
+    interim_hidden_states = self.interm_af(self.interm_dense(hidden_states)) 
+
+    hidden_states = self.add_norm(hidden_states, interim_hidden_states, self.out_dense, self.out_dropout, self.out_layer_norm)
+
+    return hidden_states
+    
+    
+  
 
 class BertModel(BertPreTrainedModel):
   def __init__(self, config):
@@ -114,12 +134,13 @@ class BertModel(BertPreTrainedModel):
 
     # get word embedding
     # todo
-    inputs_embeds = None
+    inputs_embeds = self.word_embedding(input_ids)
 
 
     # get position index and position embedding
     # todo
-    pos_embeds = None
+    bs = input_shape[0]
+    pos_embeds = self.pos_embedding(torch.arange(seq_length, device = input_ids.device).unsqueeze(0).expand(bs, seq_length))
 
     # get token type ids, since we are not consider token type, just a placeholder
     tk_type_ids = torch.zeros(input_shape, dtype=torch.long, device=input_ids.device)
@@ -132,7 +153,7 @@ class BertModel(BertPreTrainedModel):
     embeds = self.embed_layer_norm(embeds)
     embeds = self.embed_dropout(embeds)
 
-    raise NotImplementedError
+    return embeds
 
   def encode(self, hidden_states, attention_mask):
     # get the extended attention mask for self attention
